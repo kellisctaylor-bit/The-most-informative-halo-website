@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spartan Defense</title>
+<style>
+  body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: linear-gradient(135deg, #0d1320, #1b2a4a);
+    color: #e8e8e8;
+    text-align: center;
+    padding: 30px 20px;
+    min-height: 100vh;
+    box-sizing: border-box;
+  }
+  h1 {
+    color: #4fc3f7;
+    font-family: 'Trebuchet MS', sans-serif;
+    margin-bottom: 5px;
+  }
+  p.subtitle {
+    margin-top: 0;
+    color: #cfd8dc;
+  }
+  .game-wrapper {
+    display: inline-block;
+    position: relative;
+    margin-top: 15px;
+  }
+  canvas {
+    background-color: #060a14;
+    border: 3px solid #4fc3f7;
+    border-radius: 8px;
+    display: block;
+    max-width: 100%;
+  }
+  .hud {
+    display: flex;
+    justify-content: space-between;
+    max-width: 700px;
+    margin: 10px auto 0;
+    font-size: 1.1em;
+    font-weight: bold;
+  }
+  .hud span {
+    color: #4fc3f7;
+  }
+  #overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(6,10,20,0.85);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+  }
+  #overlay h2 {
+    color: #4fc3f7;
+    margin-bottom: 10px;
+  }
+  #overlay p {
+    margin: 5px 0 15px;
+    max-width: 500px;
+    line-height: 1.5;
+    padding: 0 15px;
+  }
+  #startBtn, #restartBtn {
+    padding: 12px 30px;
+    font-size: 1.1em;
+    background-color: #4fc3f7;
+    color: #10141f;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: bold;
+  }
+  #startBtn:hover, #restartBtn:hover {
+    background-color: #82d6ff;
+  }
+  .controls {
+    margin-top: 15px;
+    color: #9fb3c8;
+    font-size: 0.95em;
+  }
+  .back-link {
+    display: inline-block;
+    margin-top: 25px;
+    color: #4fc3f7;
+    text-decoration: none;
+    font-weight: bold;
+  }
+  .back-link:hover {
+    text-decoration: underline;
+  }
+</style>
+</head>
+<body>
+
+  <h1>Spartan Defense</h1>
+  <p class="subtitle">Defend the position. Survive the Covenant waves.</p>
+
+  <div class="game-wrapper">
+    <canvas id="gameCanvas" width="700" height="450"></canvas>
+    <div id="overlay">
+      <h2>Spartan Defense</h2>
+      <p>
+        Move with W A S D or the arrow keys. Aim with your mouse and click
+        (or hold) to fire. Survive as many waves of Covenant grunts and
+        elites as you can. Each wave gets faster and tougher. You have
+        5 lives &mdash; lose them all and it's game over.
+      </p>
+      <button id="startBtn">Start Game</button>
+    </div>
+  </div>
+
+  <div class="hud">
+    <p>Health: <span id="healthDisplay">5</span></p>
+    <p>Score: <span id="scoreDisplay">0</span></p>
+    <p>Wave: <span id="waveDisplay">1</span></p>
+  </div>
+
+  <div class="controls">
+    WASD / Arrow Keys to move &nbsp;|&nbsp; Mouse to aim &nbsp;|&nbsp; Click or hold Left Mouse to shoot
+  </div>
+
+  <br>
+  <a href="../index.html" class="back-link">&larr; Back to Halo Page</a>
+
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+    const overlay = document.getElementById("overlay");
+    const startBtn = document.getElementById("startBtn");
+    const healthDisplay = document.getElementById("healthDisplay");
+    const scoreDisplay = document.getElementById("scoreDisplay");
+    const waveDisplay = document.getElementById("waveDisplay");
+
+    const W = canvas.width;
+    const H = canvas.height;
+
+    let keys = {};
+    let mouse = { x: W / 2, y: H / 2, down: false };
+
+    let player, bullets, enemies, particles;
+    let score, health, wave, waveTimer, enemySpawnTimer, shootCooldown;
+    let gameRunning = false;
+    let animFrame = null;
+
+    function resetGame() {
+      player = { x: W / 2, y: H / 2, radius: 14, speed: 3 };
+      bullets = [];
+      enemies = [];
+      particles = [];
+      score = 0;
+      health = 5;
+      wave = 1;
+      waveTimer = 0;
+      enemySpawnTimer = 0;
+      shootCooldown = 0;
+      updateHUD();
+    }
+
+    function updateHUD() {
+      healthDisplay.textContent = health;
+      scoreDisplay.textContent = score;
+      waveDisplay.textContent = wave;
+    }
+
+    // ---- Input ----
+    window.addEventListener("keydown", e => { keys[e.key.toLowerCase()] = true; });
+    window.addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; });
+
+    canvas.addEventListener("mousemove", e => {
+      const rect = canvas.getBoundingClientRect();
+      mouse.x = (e.clientX - rect.left) * (canvas.width / rect.width);
+      mouse.y = (e.clientY - rect.top) * (canvas.height / rect.height);
+    });
+    canvas.addEventListener("mousedown", () => { mouse.down = true; });
+    canvas.addEventListener("mouseup", () => { mouse.down = false; });
+    canvas.addEventListener("mouseleave", () => { mouse.down = false; });
+
+    // ---- Enemy spawning ----
+    function spawnEnemy() {
+      const edge = Math.floor(Math.random() * 4);
+      let x, y;
+      if (edge === 0) { x = Math.random() * W; y = -20; }
+      else if (edge === 1) { x = W + 20; y = Math.random() * H; }
+      else if (edge === 2) { x = Math.random() * W; y = H + 20; }
+      else { x = -20; y = Math.random() * H; }
+
+      const isElite = Math.random() < Math.min(0.1 + wave * 0.03, 0.4);
+
+      enemies.push({
+        x, y,
+        radius: isElite ? 16 : 11,
+        speed: (isElite ? 0.9 : 1.3) + wave * 0.08,
+        hp: isElite ? 3 : 1,
+        maxHp: isElite ? 3 : 1,
+        color: isElite ? "#ff7043" : "#7fdb6f",
+        scoreValue: isElite ? 30 : 10
+      });
+    }
+
+    // ---- Game loop ----
+    function update() {
+      // Player movement
+      let dx = 0, dy = 0;
+      if (keys["w"] || keys["arrowup"]) dy -= 1;
+      if (keys["s"] || keys["arrowdown"]) dy += 1;
+      if (keys["a"] || keys["arrowleft"]) dx -= 1;
+      if (keys["d"] || keys["arrowright"]) dx += 1;
+
+      if (dx !== 0 || dy !== 0) {
+        const len = Math.sqrt(dx * dx + dy * dy);
+        player.x += (dx / len) * player.speed;
+        player.y += (dy / len) * player.speed;
+      }
+      player.x = Math.max(player.radius, Math.min(W - player.radius, player.x));
+      player.y = Math.max(player.radius, Math.min(H - player.radius, player.y));
+
+      // Shooting
+      if (shootCooldown > 0) shootCooldown--;
+      if (mouse.down && shootCooldown <= 0) {
+        const angle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+        bullets.push({
+          x: player.x + Math.cos(angle) * player.radius,
+          y: player.y + Math.sin(angle) * player.radius,
+          vx: Math.cos(angle) * 7,
+          vy: Math.sin(angle) * 7,
+          radius: 4
+        });
+        shootCooldown = 8;
+      }
+
+      // Update bullets
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        const b = bullets[i];
+        b.x += b.vx;
+        b.y += b.vy;
+        if (b.x < -10 || b.x > W + 10 || b.y < -10 || b.y > H + 10) {
+          bullets.splice(i, 1);
+        }
+      }
+
+      // Spawn enemies
+      const spawnRate = Math.max(20, 60 - wave * 4);
+      enemySpawnTimer++;
+      if (enemySpawnTimer >= spawnRate) {
+        spawnEnemy();
+        enemySpawnTimer = 0;
+      }
+
+      // Wave progression - every 600 frames (~10 sec) increase wave
+      waveTimer++;
+      if (waveTimer >= 600) {
+        wave++;
+        waveTimer = 0;
+        updateHUD();
+      }
+
+      // Update enemies
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        const e = enemies[i];
+        const angle = Math.atan2(player.y - e.y, player.x - e.x);
+        e.x += Math.cos(angle) * e.speed;
+        e.y += Math.sin(angle) * e.speed;
+
+        // Collision with player
+        const distToPlayer = Math.hypot(e.x - player.x, e.y - player.y);
+        if (distToPlayer < e.radius + player.radius) {
+          enemies.splice(i, 1);
+          health--;
+          spawnParticles(player.x, player.y, "#ff5252");
+          updateHUD();
+          if (health <= 0) {
+            endGame();
+            return;
+          }
+          continue;
+        }
+
+        // Collision with bullets
+        for (let j = bullets.length - 1; j >= 0; j--) {
+          const b = bullets[j];
+          const dist = Math.hypot(e.x - b.x, e.y - b.y);
+          if (dist < e.radius + b.radius) {
+            e.hp--;
+            bullets.splice(j, 1);
+            spawnParticles(b.x, b.y, e.color);
+            if (e.hp <= 0) {
+              score += e.scoreValue;
+              enemies.splice(i, 1);
+              updateHUD();
+            }
+            break;
+          }
+        }
+      }
+
+      // Update particles
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life--;
+        if (p.life <= 0) particles.splice(i, 1);
+      }
+    }
+
+    function spawnParticles(x, y, color) {
+      for (let i = 0; i < 8; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = Math.random() * 2 + 1;
+        particles.push({
+          x, y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          life: 20,
+          color
+        });
+      }
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+
+      // Background grid for visual interest
+      ctx.strokeStyle = "rgba(79,195,247,0.07)";
+      ctx.lineWidth = 1;
+      for (let gx = 0; gx < W; gx += 35) {
+        ctx.beginPath();
+        ctx.moveTo(gx, 0);
+        ctx.lineTo(gx, H);
+        ctx.stroke();
+      }
+      for (let gy = 0; gy < H; gy += 35) {
+        ctx.beginPath();
+        ctx.moveTo(0, gy);
+        ctx.lineTo(W, gy);
+        ctx.stroke();
+      }
+
+      // Particles
+      particles.forEach(p => {
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = p.life / 20;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      });
+
+      // Enemies
+      enemies.forEach(e => {
+        ctx.fillStyle = e.color;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // HP bar for elites
+        if (e.maxHp > 1) {
+          ctx.fillStyle = "#10141f";
+          ctx.fillRect(e.x - 15, e.y - e.radius - 10, 30, 4);
+          ctx.fillStyle = "#7fdb6f";
+          ctx.fillRect(e.x - 15, e.y - e.radius - 10, 30 * (e.hp / e.maxHp), 4);
+        }
+      });
+
+      // Bullets
+      ctx.fillStyle = "#fff176";
+      bullets.forEach(b => {
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // Player
+      ctx.fillStyle = "#4fc3f7";
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Player direction indicator (gun)
+      const angle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(player.x, player.y);
+      ctx.lineTo(player.x + Math.cos(angle) * (player.radius + 12), player.y + Math.sin(angle) * (player.radius + 12));
+      ctx.stroke();
+    }
+
+    function loop() {
+      if (!gameRunning) return;
+      update();
+      if (gameRunning) {
+        draw();
+        animFrame = requestAnimationFrame(loop);
+      }
+    }
+
+    function startGame() {
+      resetGame();
+      overlay.style.display = "none";
+      gameRunning = true;
+      loop();
+    }
+
+    function endGame() {
+      gameRunning = false;
+      cancelAnimationFrame(animFrame);
+      overlay.style.display = "flex";
+      overlay.innerHTML = `
+        <h2>Game Over</h2>
+        <p>You were overrun on wave ${wave} with a final score of ${score}.</p>
+        <button id="restartBtn">Play Again</button>
+      `;
+      document.getElementById("restartBtn").addEventListener("click", startGame);
+    }
+
+    startBtn.addEventListener("click", startGame);
+
+    // Initial draw so the canvas isn't blank before starting
+    resetGame();
+    draw();
+  </script>
+
+</body>
+</html>
